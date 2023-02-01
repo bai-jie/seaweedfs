@@ -102,30 +102,66 @@ func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, w
 
 	downloadThrottler := util.NewWriteThrottler(downloadMaxBytesPs)
 	remaining := size
+
+	var buffers []*bytes.Buffer
+	var wg sync.WaitGroup
+	errorChan := make(chan error)
+
 	for x := chunkViews.Front(); x != nil; x = x.Next {
+		buf := new(bytes.Buffer)
+		buffers = append(buffers, buf)
+		wg.Add(1)
+
 		chunkView := x.Value
 		if offset < chunkView.ViewOffset {
 			gap := chunkView.ViewOffset - offset
 			remaining -= gap
 			glog.V(4).Infof("zero [%d,%d)", offset, chunkView.ViewOffset)
-			err := writeZero(writer, gap)
+			err := writeZero(buf, gap)
 			if err != nil {
 				return fmt.Errorf("write zero [%d,%d)", offset, chunkView.ViewOffset)
 			}
 			offset = chunkView.ViewOffset
 		}
 		urlStrings := fileId2Url[chunkView.FileId]
-		start := time.Now()
-		err := retriedStreamFetchChunkData(writer, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+
 		offset += int64(chunkView.ViewSize)
 		remaining -= int64(chunkView.ViewSize)
-		stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
+
+		go func() {
+			defer wg.Done()
+			//TODO cancel all when one failed
+
+			start := time.Now()
+			err := retriedStreamFetchChunkData(buf, urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+			stats.FilerRequestHistogram.WithLabelValues("chunkDownload").Observe(time.Since(start).Seconds())
+			if err != nil {
+				stats.FilerRequestCounter.WithLabelValues("chunkDownloadError").Inc()
+				errorChan <- fmt.Errorf("read chunk: %v", err)
+				return
+			}
+			stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
+			downloadThrottler.MaybeSlowdown(int64(chunkView.ViewSize))
+		}()
+	}
+
+	completeChan := make(chan struct{})
+	go func() {
+		wg.Wait()
+		completeChan <- struct{}{}
+	}()
+	select {
+	case err := <-errorChan:
+		return err
+	case <-completeChan:
+		// continue
+	}
+
+	for _, buf := range buffers {
+		_, err := buf.WriteTo(writer)
 		if err != nil {
-			stats.FilerRequestCounter.WithLabelValues("chunkDownloadError").Inc()
-			return fmt.Errorf("read chunk: %v", err)
+			return fmt.Errorf("reassemble chunk: %v", err)
 		}
-		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
-		downloadThrottler.MaybeSlowdown(int64(chunkView.ViewSize))
 	}
 	if remaining > 0 {
 		glog.V(4).Infof("zero [%d,%d)", offset, offset+remaining)
