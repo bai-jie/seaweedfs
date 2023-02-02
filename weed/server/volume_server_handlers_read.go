@@ -51,7 +51,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// glog.V(4).Infoln("volume", volumeId, "reading", n)
-	hasVolume := vs.store.HasVolume(volumeId)
+	hasVolume, volumeHasRemoteFile := vs.store.HasVolume2(volumeId)
 	_, hasEcVolume := vs.store.FindEcVolume(volumeId)
 	if !hasVolume && !hasEcVolume {
 		if vs.ReadMode == "local" {
@@ -124,7 +124,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	var count int
 	var memoryCost types.Size
-	readOption.AttemptMetaOnly, readOption.MustMetaOnly = shouldAttemptStreamWrite(hasVolume, ext, r)
+	readOption.AttemptMetaOnly, readOption.MustMetaOnly = shouldAttemptStreamWrite(hasVolume && !volumeHasRemoteFile, ext, r)
 	onReadSizeFn := func(size types.Size) {
 		memoryCost = size
 		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(memoryCost))

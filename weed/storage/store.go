@@ -436,6 +436,14 @@ func (s *Store) HasVolume(i needle.VolumeId) bool {
 	return v != nil
 }
 
+func (s *Store) HasVolume2(i needle.VolumeId) (bool, bool) {
+	v := s.findVolume(i)
+	if v == nil {
+		return false, false
+	}
+	return true, v.hasRemoteFile
+}
+
 func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error {
 	v := s.findVolume(i)
 	if v == nil {
