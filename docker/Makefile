@@ -6,16 +6,16 @@ gen: dev
 
 cgo ?= 0
 binary:
-	export SWCOMMIT=$(shell git rev-parse --short HEAD)
-	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$(SWCOMMIT)"
-	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-extldflags -static $(SWLDFLAGS)" && mv weed ../docker/
+	export SWCOMMIT=$(shell git rev-parse --short HEAD) && \
+	export SWLDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util.COMMIT=$${SWCOMMIT}" && \
+	cd ../weed && CGO_ENABLED=$(cgo) GOOS=linux go build $(options) -tags "$(tags)" -ldflags "-extldflags -static $${SWLDFLAGS}" && mv weed ../docker/
 
 binary_race: options = -race
 binary_race: cgo = 1
 binary_race: binary
 
 build: binary
-	docker build --no-cache -t chrislusf/seaweedfs:local -f Dockerfile.local .
+	docker build --no-cache -t ghcr.io/bai-jie/seaweedfs:3.41-fast -f Dockerfile.local .
 
 build_e2e: binary_race
 	docker build --no-cache -t chrislusf/seaweedfs:e2e -f Dockerfile.e2e .
