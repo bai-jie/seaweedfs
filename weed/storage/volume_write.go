@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"os"
 )
@@ -68,6 +69,36 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 			return
 		}
 	}
+	if v.isCompacting || v.isCommitCompacting {
+		err = fmt.Errorf("volume %d is compacting", v.Id)
+		return
+	}
+	close(v.asyncRequestsChan)
+	storageName, storageKey := v.RemoteStorageNameKey()
+	if v.HasRemoteFile() && storageName != "" && storageKey != "" {
+		if backendStorage, found := backend.BackendStorages[storageName]; found {
+			backendStorage.DeleteFile(storageKey)
+		}
+	}
+	v.doClose()
+	removeVolumeFiles(v.DataFileName())
+	removeVolumeFiles(v.IndexFileName())
+	return
+}
+
+func (v *Volume) IsEmpty() bool {
+	datSize, _, _ := v.FileStat()
+	return datSize <= super_block.SuperBlockSize && v.ContentSize() == 0
+}
+
+func (v *Volume) DestroyOnlyEmpty() (err error) {
+	if !v.IsEmpty() {
+		return ErrVolumeNotEmpty
+	}
+
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
+
 	if v.isCompacting || v.isCommitCompacting {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return

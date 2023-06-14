@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -163,4 +164,108 @@ func TestDestroyNonemptyVolumeWithoutOnlyEmpty(t *testing.T) {
 		t.Fatalf("destroy volume: %v", err)
 	}
 	assertFileExist(t, false, path)
+}
+
+func TestPhantomRead(t *testing.T) {
+	//dir := t.TempDir()
+	// RAMDisk: https://stackoverflow.com/questions/2033362/does-os-x-have-an-equivalent-to-dev-shm
+	dir := fmt.Sprintf("/Volumes/RAMDisk/seaweedtest/%d", time.Now().UnixNano())
+	os.Mkdir(dir, os.ModePerm)
+
+	wrongCount := 0
+
+	for i := 1; i <= 70000; i++ {
+		if i%10000 == 0 {
+			fmt.Printf("%d at %s\n", i, time.Now())
+		}
+		v, err := NewVolume(dir, dir, "", needle.VolumeId(uint32(i)), NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, 0, 0)
+		if err != nil {
+			t.Fatalf("volume creation: %v", err)
+		}
+		path := v.DataBackend.Name()
+		var wg sync.WaitGroup
+		cleanerCompletedChan := make(chan interface{}, 1)
+		wg.Add(2)
+		go func() {
+			defer func() {
+				cleanerCompletedChan <- nil
+				wg.Done()
+			}()
+			cleaner(v)
+		}()
+		go func() {
+			defer wg.Done()
+
+			writerErr := writer(t, v, path, cleanerCompletedChan)
+			if writerErr != nil {
+				//assertFileExist(t, true, path)
+				fmt.Printf("writer %s: %v\n", path, writerErr)
+				wrongCount += 1
+			}
+		}()
+		wg.Wait()
+		v.Close()
+	}
+	fmt.Printf("wrongCount: %d\n", wrongCount)
+}
+
+func writer(t *testing.T, v *Volume, path string, cleanerCompletedChan chan interface{}) error {
+	originalNeedle := newRandomNeedle(1)
+	if len(originalNeedle.Data) == 0 {
+		return nil // skip empty data
+	}
+	err := catchPanic(func() (err error) {
+		_, _, _, err = v.writeNeedle2(originalNeedle, true, false)
+		return
+	})
+	if err != nil {
+		return nil // accept cannot write (maybe already cleaned)
+	}
+
+	<-cleanerCompletedChan
+
+	//v.read
+	exist, err := isFileExist(path)
+	if err != nil {
+		return fmt.Errorf("isFileExist: %v", err)
+	}
+	if !exist {
+		return fmt.Errorf("file not exists after write")
+	}
+
+	nv, _ := v.nm.Get(originalNeedle.Id)
+	readNeedle := new(needle.Needle)
+	readNeedle.DataSize = uint32(len(originalNeedle.Data))
+	buf := make([]byte, len(originalNeedle.Data))
+	count, err := readNeedle.ReadNeedleData(v.DataBackend, nv.Offset.ToActualOffset(), buf, 0)
+	if err != nil {
+		return fmt.Errorf("volume read after write: %v", err)
+	}
+	if count != len(originalNeedle.Data) {
+		return fmt.Errorf("count != len(originalNeedle.Data)")
+	}
+	if !assert.Equal(t, originalNeedle.Data, buf) {
+		return fmt.Errorf("buf not originalNeedle.Data")
+	}
+	return nil
+}
+
+func cleaner(v *Volume) {
+	err := v.DestroyOnlyEmpty()
+	//err := v.Destroy(true)
+	if err != nil && err != ErrVolumeNotEmpty {
+		fmt.Printf("cleaner: %v\n", err)
+	}
+}
+
+func catchPanic(fun func() error) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			if err == nil {
+				err = fmt.Errorf("panic occurred: %v", e)
+			}
+		}
+	}()
+	err = fun()
+	return
 }

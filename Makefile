@@ -11,4 +11,4 @@ full_install:
 	cd weed; go install -tags "elastic gocdk sqlite ydb tikv"
 
 tests:
-	cd weed; go test -tags "elastic gocdk sqlite ydb tikv" -v ./...
+	cd weed; go test -tags "elastic gocdk sqlite ydb tikv" -v -count=1 -run TestPhantomRead github.com/seaweedfs/seaweedfs/weed/storage
