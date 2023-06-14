@@ -139,7 +139,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 					glog.V(0).Infof("updating memory compact index %s ", v.FileName(".idx"))
 					err = v.tmpNm.UpdateNeedleMap(v, indexFile, nil, 0)
 				} else {
-					glog.V(0).Infoln("loading memory index", v.FileName(".idx"), "to memory")
+					//glog.V(0).Infoln("loading memory index", v.FileName(".idx"), "to memory")
 					if v.nm, err = LoadCompactNeedleMap(indexFile); err != nil {
 						glog.V(0).Infof("loading index %s to memory error: %v", v.FileName(".idx"), err)
 					}
